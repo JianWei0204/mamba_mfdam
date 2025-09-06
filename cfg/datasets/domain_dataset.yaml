@@ -1,5 +1,5 @@
 train: /root/autodl-tmp/ultralytics/data/all_train.txt
-val: /root/autodl-tmp/VMamba/datasets/once/images/val
+val: /root/autodl-tmp/VMamba/datasets/soda10m/images/val
 nc: 6
 names:
   0: Pedestrain

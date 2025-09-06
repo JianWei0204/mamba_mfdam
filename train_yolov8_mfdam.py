@@ -70,7 +70,6 @@ def main():
         max_alpha=1.0
     )
 
-
     print(f"训练完成。结果: {results}")
 
     # 在两个域上测试

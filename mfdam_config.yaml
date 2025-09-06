@@ -1,0 +1,29 @@
+# Mamba-MFDAM配置文件
+
+# 基础YOLOv8配置
+model: yolov8n.pt
+data: domain_dataset.yaml
+epochs: 100
+batch: 16
+device: 0
+
+# MFDAM特定配置
+mfdam:
+  enabled: true
+  domain_weight: 0.1      # 域适应损失权重
+  alpha_schedule: linear  # GRL alpha调度策略
+  max_alpha: 1.0         # 最大alpha值
+  fusion_channels: 256   # 特征融合通道数
+
+  # Mamba配置
+  mamba:
+    d_state: 16          # 状态维度
+    d_conv: 4            # 卷积核大小
+    expand: 2            # 扩展因子
+
+# 训练配置
+train:
+  optimizer: AdamW
+  lr0: 0.001
+  weight_decay: 0.0005
+  warmup_epochs: 3

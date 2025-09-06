@@ -5,10 +5,12 @@ from ultralytics.utils import LOGGER, DEFAULT_CFG
 from mamba_mfdam import MambaMFDAM
 import numpy as np
 
+
 class NeckFeatureExtractor:
     """
     用于从YOLOv8模型中提取neck输出特征的hook管理器
     """
+
     def __init__(self, model):
         self.model = model
         self.features = []
@@ -27,7 +29,7 @@ class NeckFeatureExtractor:
                     layers.append(m)
         return layers
 
-    def _hook_fn(self, output):
+    def _hook_fn(self, module, input, output):
         # hook回调函数，每次目标层前向传播时自动调用，把输出特征保存到
         self.features.append(output)
 
@@ -49,6 +51,7 @@ class NeckFeatureExtractor:
         # 返回neck的三个尺度特征列表
         # 按照 [small, medium, large]
         return [f for f in self.features]
+
 
 class YOLOv8MFDAMTrainer(DetectionTrainer):
     def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks=None):
@@ -75,11 +78,18 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
             LOGGER.warning("未能提取neck通道数，MFDAM模块未初始化")
         return model
 
-    def get_dataloader(self, dataset_path, mode, batch_size):
-        # 复用YOLOv8原始dataloader逻辑
-        from ultralytics.models.yolo.detect.train import DetectionTrainer as BaseTrainer
-        base_trainer = BaseTrainer(self.args)
-        return base_trainer.get_dataloader(dataset_path, mode, batch_size)
+    def get_custom_dataloader(self, dataset_path, mode='train', batch_size=None):
+        """获取自定义数据加载器"""
+        if batch_size is None:
+            batch_size = self.args.batch
+
+        # 使用父类的方法构建数据集
+        dataset = self.build_dataset(dataset_path, mode, batch_size)
+
+        # 创建数据加载器
+        dataloader = self.get_dataloader(dataset, batch_size)
+
+        return dataloader
 
     def extract_neck_features(self, imgs):
         """利用hook机制提取neck特征"""
@@ -99,63 +109,104 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
                 torch.randn(batch_size, 1024, 5, 5).to(self.device)
             ]
 
-    def train(self):
-        source_loader = self.get_dataloader(self.source_data, 'train', self.args.batch)
-        target_loader = self.get_dataloader(self.target_data, 'train', self.args.batch)
-        source_iter = iter(source_loader)
-        target_iter = iter(target_loader)
-        num_batches = min(len(source_loader), len(target_loader))
+    def _do_train(self, world_size=1):
+        """重写训练方法以实现交替训练"""
+        try:
+            # 初始化neck特征提取器
+            self.neck_extractor = NeckFeatureExtractor(self.model)
 
-        # 初始化neck特征提取器
-        self.neck_extractor = NeckFeatureExtractor(self.model)
+            # 构建源域和目标域数据集
+            source_dataset = self.build_dataset(self.source_data, mode='train', batch=self.args.batch)
+            target_dataset = self.build_dataset(self.target_data, mode='train', batch=self.args.batch)
 
-        for epoch in range(self.epochs):
-            self.model.train()
-            for batch_idx in range(num_batches):
-                # 源域batch
-                try:
-                    source_batch = next(source_iter)
-                except StopIteration:
-                    source_iter = iter(source_loader)
-                    source_batch = next(source_iter)
-                source_imgs = source_batch['img'].to(self.device)
-                source_domain_labels = torch.zeros(source_imgs.size(0), dtype=torch.long, device=self.device)  # 源域=0
+            # 创建数据加载器
+            from torch.utils.data import DataLoader
+            source_loader = DataLoader(
+                source_dataset,
+                batch_size=self.args.batch,
+                shuffle=True,
+                num_workers=self.args.workers,
+                collate_fn=source_dataset.collate_fn if hasattr(source_dataset, 'collate_fn') else None
+            )
+            target_loader = DataLoader(
+                target_dataset,
+                batch_size=self.args.batch,
+                shuffle=True,
+                num_workers=self.args.workers,
+                collate_fn=target_dataset.collate_fn if hasattr(target_dataset, 'collate_fn') else None
+            )
 
-                # 1. 检测损失
-                preds = self.model(source_imgs)
-                yolo_loss = super().loss(source_batch, preds)
-                # 2. neck特征提取
-                neck_features = self.extract_neck_features(source_imgs)
-                # 3. 域判别损失
-                _, domain_loss = self.mfdam_module(neck_features, source_domain_labels)
-                total_loss = yolo_loss + self.domain_weight * domain_loss if domain_loss is not None else yolo_loss
-                total_loss.backward()
-                self.optimizer.step()
-                self.optimizer.zero_grad()
+            source_iter = iter(source_loader)
+            target_iter = iter(target_loader)
+            num_batches = min(len(source_loader), len(target_loader))
 
-                # 目标域batch
-                try:
-                    target_batch = next(target_iter)
-                except StopIteration:
-                    target_iter = iter(target_loader)
-                    target_batch = next(target_iter)
-                target_imgs = target_batch['img'].to(self.device)
-                target_domain_labels = torch.ones(target_imgs.size(0), dtype=torch.long, device=self.device)  # 目标域=1
+            LOGGER.info(f"开始交替训练: 源域{len(source_loader)}批次, 目标域{len(target_loader)}批次")
 
-                # 只做域判别损失，不做检测损失
-                neck_features = self.extract_neck_features(target_imgs)
-                _, domain_loss = self.mfdam_module(neck_features, target_domain_labels)
-                if domain_loss is not None:
-                    domain_loss = self.domain_weight * domain_loss
-                    domain_loss.backward()
-                    self.optimizer.step()
+            for epoch in range(self.epochs):
+                self.model.train()
+                epoch_loss = 0.0
+
+                for batch_idx in range(num_batches):
+                    # 源域batch训练
+                    try:
+                        source_batch = next(source_iter)
+                    except StopIteration:
+                        source_iter = iter(source_loader)
+                        source_batch = next(source_iter)
+
+                    source_imgs = source_batch['img'].to(self.device)
+                    source_domain_labels = torch.zeros(source_imgs.size(0), dtype=torch.long, device=self.device)
+
+                    # 1. 检测损失
+                    preds = self.model(source_imgs)
+                    yolo_loss = self.criterion(preds, source_batch)
+
+                    # 2. neck特征提取和域判别损失
+                    neck_features = self.extract_neck_features(source_imgs)
+                    _, domain_loss = self.mfdam_module(neck_features, source_domain_labels)
+
+                    total_loss = yolo_loss + self.domain_weight * domain_loss if domain_loss is not None else yolo_loss
+
+                    # 反向传播
+                    self.scaler.scale(total_loss).backward()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
                     self.optimizer.zero_grad()
 
-            self.current_epoch += 1
-            LOGGER.info(f"完成第{epoch+1}轮训练")
+                    epoch_loss += total_loss.item()
 
-        # 训练结束后移除hook
-        self.neck_extractor.remove()
+                    # 目标域batch训练
+                    try:
+                        target_batch = next(target_iter)
+                    except StopIteration:
+                        target_iter = iter(target_loader)
+                        target_batch = next(target_iter)
+
+                    target_imgs = target_batch['img'].to(self.device)
+                    target_domain_labels = torch.ones(target_imgs.size(0), dtype=torch.long, device=self.device)
+
+                    # 只做域判别损失
+                    neck_features = self.extract_neck_features(target_imgs)
+                    _, domain_loss = self.mfdam_module(neck_features, target_domain_labels)
+
+                    if domain_loss is not None:
+                        domain_loss = self.domain_weight * domain_loss
+                        self.scaler.scale(domain_loss).backward()
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                        self.optimizer.zero_grad()
+
+                self.current_epoch += 1
+                avg_loss = epoch_loss / num_batches
+                LOGGER.info(f"Epoch {epoch + 1}/{self.epochs}: 平均损失 = {avg_loss:.4f}")
+
+        except Exception as e:
+            LOGGER.error(f"训练过程中出错: {e}")
+            raise
+        finally:
+            # 确保清理hook
+            if hasattr(self, 'neck_extractor'):
+                self.neck_extractor.remove()
 
     def _extract_neck_channels(self, model):
         neck_channels = []

@@ -3,7 +3,7 @@ train: images/train
 val: images/val
 # Classes
 names:
-  0: Pedestrain
+  0: Pedestrian
   1: Cyclist
   2: Car
   3: Truck

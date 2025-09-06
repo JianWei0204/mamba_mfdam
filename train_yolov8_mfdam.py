@@ -1,19 +1,12 @@
-"""
-YOLOv8与Mamba-MFDAM的训练脚本
-"""
-
 from ultralytics import YOLO
 from yolov8_mfdam_trainer import YOLOv8MFDAMTrainer
 import argparse
-import yaml
-
-
 
 def main():
-    parser = argparse.ArgumentParser(description='YOLOv8 + Mamba-MFDAM训练脚本')
-    # 保持 --model 参数名称
-    parser.add_argument('--pretrained', type=str, default='yolov8n.pt', help='YOLOv8模型')
-    parser.add_argument('--datasets', type=str, default='/root/autodl-tmp/ultralytics/cfg/datasets/domain_dataset.yaml', help='数据集')
+    parser = argparse.ArgumentParser(description='YOLOv8 + Mamba-MFDAM批次级交替训练脚本')
+    parser.add_argument('--pretrained', type=str, default='yolov8n.pt')
+    parser.add_argument('--source-data', type=str,default='/root/autodl-tmp/VMamba/datasets/source_dataset.yaml', help='源域yaml')
+    parser.add_argument('--target-data', type=str,default='/root/autodl-tmp/VMamba/datasets/target_dataset.yaml', help='目标域yaml')
     parser.add_argument('--epochs', type=int, default=100, help='训练轮次')
     parser.add_argument('--batch-size', type=int, default=16, help='批次大小')
     parser.add_argument('--domain-weight', type=float, default=0.1, help='域适应损失权重')
@@ -23,16 +16,14 @@ def main():
     parser.add_argument('--imgsz', type=int, default=640, help='输入图像尺寸')
     parser.add_argument('--lr0', type=float, default=0.01, help='初始学习率')
     parser.add_argument('--weight-decay', type=float, default=0.0005, help='权重衰减')
-
     args = parser.parse_args()
 
-
-    # 使用 args.model
+    # 初始化模型
     model = YOLO(args.pretrained)
 
-    # 使用MFDAM训练
+    # 交替训练
     results = model.train(
-        data=args.datasets,
+        data=args.source_data,  # 只用于初始化类别等
         epochs=args.epochs,
         batch=args.batch_size,
         imgsz=args.imgsz,
@@ -42,27 +33,20 @@ def main():
         lr0=args.lr0,
         weight_decay=args.weight_decay,
         trainer=YOLOv8MFDAMTrainer,
-        # MFDAM特定参数
         domain_weight=args.domain_weight,
-        alpha_schedule='linear',
-        max_alpha=1.0
+        source_data=args.source_data,
+        target_data=args.target_data
     )
-
 
     print(f"训练完成。结果: {results}")
 
-    source_yaml = '/root/autodl-tmp/VMamba/datasets/source_dataset.yaml'
-    target_yaml = '/root/autodl-tmp/VMamba/datasets/target_dataset.yaml'
-    # 在两个域上测试
     print("\n在源域上评估...")
-    source_results = model.val(data=source_yaml)
+    source_results = model.val(data=args.source_data)
+    print(f"源域 mAP50: {source_results.box.map50:.4f}")
 
     print("\n在目标域上评估...")
-    target_results = model.val(data=target_yaml)
-
-    print(f"源域 mAP50: {source_results.box.map50:.4f}")
+    target_results = model.val(data=args.target_data)
     print(f"目标域 mAP50: {target_results.box.map50:.4f}")
-
 
 if __name__ == '__main__':
     main()

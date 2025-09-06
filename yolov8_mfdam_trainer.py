@@ -143,13 +143,17 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
             torch.randn(batch_size, 1024, 5, 5).to(self.device)
         ]
 
-    def _create_domain_labels(self, batch_size):
-        """创建域标签"""
-        # 简单的实现：假设批次中一半是源域，一半是目标域
-        # 在实际应用中，您需要根据数据来源设置正确的标签
-        domain_labels = torch.zeros(batch_size, dtype=torch.long, device=self.device)
-        # 可以根据实际需求修改标签分配逻辑
-        return domain_labels
+    def _create_domain_labels(self, batch):
+        # 假设batch['img_path']是图片路径列表
+        labels = []
+        for img_path in batch['img_path']:
+            if '/soda10m/' in img_path:
+                labels.append(0)  # 源域
+            elif '/once/' in img_path:
+                labels.append(1)  # 目标域
+            else:
+                labels.append(0)  # 默认源域
+        return torch.tensor(labels, dtype=torch.long, device=self.device)
 
     def loss(self, batch, preds=None):
         """包含域适应的修改损失函数"""

@@ -8,28 +8,12 @@ import argparse
 import yaml
 
 
-def create_domain_dataset_config(source_data, target_data, output_path):
-    """创建域适应的数据集配置"""
-    config = {
-        'path': '',  # 根目录
-        'train': [source_data, target_data],  # 源域和目标域都用于训练
-        'val': source_data,  # 在源域上验证
-        'nc': 6,  # 类别数量 (根据您的数据集调整)
-        'names': ['Pedestrain','Cyclist','Car','Truck','Tram','Tricycle']  # 类别名称
-    }
-
-    with open(output_path, 'w') as f:
-        yaml.dump(config, f)
-
-    return output_path
-
 
 def main():
     parser = argparse.ArgumentParser(description='YOLOv8 + Mamba-MFDAM训练脚本')
     # 保持 --model 参数名称
     parser.add_argument('--pretrained', type=str, default='yolov8n.pt', help='YOLOv8模型')
-    parser.add_argument('--source-data', type=str, default='/root/autodl-tmp/ultralytics/cfg/datasets/source_dataset.yaml', help='源域数据集')
-    parser.add_argument('--target-data', type=str, default='/root/autodl-tmp/ultralytics/cfg/datasets/target_dataset.yaml', help='目标域数据集')
+    parser.add_argument('datasets', type=str, default='/root/autodl-tmp/ultralytics/cfg/datasets/domain_dataset.yaml', help='数据集')
     parser.add_argument('--epochs', type=int, default=100, help='训练轮次')
     parser.add_argument('--batch-size', type=int, default=16, help='批次大小')
     parser.add_argument('--domain-weight', type=float, default=0.1, help='域适应损失权重')
@@ -42,19 +26,13 @@ def main():
 
     args = parser.parse_args()
 
-    # 创建数据集配置
-    dataset_config = create_domain_dataset_config(
-        args.source_data,
-        args.target_data,
-        'domain_dataset.yaml'
-    )
 
     # 使用 args.model
     model = YOLO(args.pretrained)
 
     # 使用MFDAM训练
     results = model.train(
-        data=dataset_config,
+        data=args.datasets,
         epochs=args.epochs,
         batch=args.batch_size,
         imgsz=args.imgsz,

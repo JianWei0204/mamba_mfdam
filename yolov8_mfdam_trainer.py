@@ -84,21 +84,35 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
         return neck_channels
 
     def setup_model(self):
-        """设置包含MFDAM集成的模型"""
         super().setup_model()
 
-        if self.mfdam_module is not None:
-            # 将MFDAM参数添加到优化器
+    def build_optimizer(self, model, name="auto", lr=0.001, momentum=0.9, decay=1e-5, iterations=1e5):
+        # 先调用父类，获得标准的 optimizer
+        optimizer = super().build_optimizer(model, name, lr, momentum, decay, iterations)
+        # 添加 MFDAM 参数组
+        if hasattr(self, "mfdam_module") and self.mfdam_module is not None:
             mfdam_params = list(self.mfdam_module.parameters())
             if mfdam_params:
-                # 为MFDAM创建单独的参数组
-                if hasattr(self.optimizer, 'add_param_group'):
-                    self.optimizer.add_param_group({
-                        'params': mfdam_params,
-                        'lr': self.args.lr0 * 0.1,  # MFDAM使用较低的学习率
-                        'weight_decay': self.args.weight_decay
-                    })
-                    LOGGER.info(f"已将{len(mfdam_params)}个MFDAM参数添加到优化器")
+                optimizer.add_param_group({
+                    'params': mfdam_params,
+                    'lr': lr * 0.1,  # 或自定义学习率
+                    'weight_decay': decay
+                })
+                print(f"已将{len(mfdam_params)}个 MFDAM 参数添加到优化器")
+        return optimizer
+
+    def setup_optimizer(self):
+        super().setup_optimizer()
+        # 在此处安全地添加 MFDAM 参数组到优化器
+        if self.mfdam_module is not None:
+            mfdam_params = list(self.mfdam_module.parameters())
+            if mfdam_params:
+                self.optimizer.add_param_group({
+                    'params': mfdam_params,
+                    'lr': self.args.lr0 * 0.1,
+                    'weight_decay': self.args.weight_decay
+                })
+                LOGGER.info(f"已将{len(mfdam_params)}个MFDAM参数添加到优化器")
 
     def update_alpha(self, epoch, total_epochs):
         """根据训练进度更新GRL alpha参数"""
@@ -183,9 +197,9 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
         """训练循环，包含alpha调度"""
         # 在训练开始前更新alpha
         if self.mfdam_module is not None:
-            alpha = self.update_alpha(self.epoch, self.epochs)
-            if self.epoch % 10 == 0:
-                LOGGER.info(f"轮次 {self.epoch}: GRL alpha = {alpha:.4f}")
+            alpha = self.update_alpha(self.current_epoch, self.epochs)
+            if self.current_epoch % 10 == 0:
+                LOGGER.info(f"轮次 {self.current_epoch}: GRL alpha = {alpha:.4f}")
 
         # 调用父类的训练方法
         return super()._do_train(world_size)

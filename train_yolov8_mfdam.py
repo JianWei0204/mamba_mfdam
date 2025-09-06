@@ -15,7 +15,7 @@ def create_domain_dataset_config(source_data, target_data, output_path):
         'train': [source_data, target_data],  # 源域和目标域都用于训练
         'val': source_data,  # 在源域上验证
         'nc': 6,  # 类别数量 (根据您的数据集调整)
-        'names': []  # 类别名称
+        'names': ['Pedestrain','Cyclist','Car','Truck','Tram','Tricycle']  # 类别名称
     }
 
     with open(output_path, 'w') as f:

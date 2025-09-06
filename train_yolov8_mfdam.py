@@ -14,7 +14,7 @@ def create_domain_dataset_config(source_data, target_data, output_path):
         'path': '',  # 根目录
         'train': [source_data, target_data],  # 源域和目标域都用于训练
         'val': source_data,  # 在源域上验证
-        'nc': 80,  # 类别数量 (根据您的数据集调整)
+        'nc': 6,  # 类别数量 (根据您的数据集调整)
         'names': []  # 类别名称
     }
 
@@ -33,7 +33,7 @@ def main():
     parser.add_argument('--epochs', type=int, default=100, help='训练轮次')
     parser.add_argument('--batch-size', type=int, default=16, help='批次大小')
     parser.add_argument('--domain-weight', type=float, default=0.1, help='域适应损失权重')
-    parser.add_argument('--device', type=str, default='0', help='CUDA设备')
+    parser.add_argument('--device', type=str, default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--project', type=str, default='runs/train', help='项目目录')
     parser.add_argument('--name', type=str, default='yolov8_mfdam', help='实验名称')
     parser.add_argument('--imgsz', type=int, default=640, help='输入图像尺寸')

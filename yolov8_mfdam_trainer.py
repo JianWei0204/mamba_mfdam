@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from ultralytics.models.yolo.detect import DetectionTrainer
-from ultralytics.utils import LOGGER
+from ultralytics.utils import LOGGER, DEFAULT_CFG
 from mamba_mfdam import MambaMFDAM
 import numpy as np
 
@@ -27,7 +27,7 @@ class NeckFeatureExtractor:
                     layers.append(m)
         return layers
 
-    def _hook_fn(self, module, input, output):
+    def _hook_fn(self, output):
         # hook回调函数，每次目标层前向传播时自动调用，把输出特征保存到
         self.features.append(output)
 
@@ -51,7 +51,7 @@ class NeckFeatureExtractor:
         return [f for f in self.features]
 
 class YOLOv8MFDAMTrainer(DetectionTrainer):
-    def __init__(self, cfg, overrides=None, _callbacks=None):
+    def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks=None):
         if overrides is None:
             overrides = {}
         self.domain_weight = overrides.pop('domain_weight', 0.1)

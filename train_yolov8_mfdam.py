@@ -5,8 +5,8 @@ import argparse
 def main():
     parser = argparse.ArgumentParser(description='YOLOv8 + Mamba-MFDAM批次级交替训练脚本')
     parser.add_argument('--pretrained', type=str, default='yolov8n.pt')
-    parser.add_argument('--source-data', type=str,default='/root/autodl-tmp/VMamba/datasets/source_dataset.yaml', help='源域yaml')
-    parser.add_argument('--target-data', type=str,default='/root/autodl-tmp/VMamba/datasets/target_dataset.yaml', help='目标域yaml')
+    parser.add_argument('--source-data', type=str,default='/root/autodl-tmp/ultralytics/cfg/datasets/source_dataset.yaml', help='源域yaml')
+    parser.add_argument('--target-data', type=str,default='/root/autodl-tmp/ultralytics/cfg/datasets/target_dataset.yaml', help='目标域yaml')
     parser.add_argument('--epochs', type=int, default=100, help='训练轮次')
     parser.add_argument('--batch-size', type=int, default=16, help='批次大小')
     parser.add_argument('--domain-weight', type=float, default=0.1, help='域适应损失权重')

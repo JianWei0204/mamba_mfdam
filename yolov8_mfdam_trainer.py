@@ -54,34 +54,15 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
             lr=self.args.lr0, weight_decay=self.args.weight_decay, momentum=self.args.momentum
         )
 
-    def get_custom_dataloader(self, dataset_path, mode='train', batch_size=None):
-        """获取自定义数据加载器"""
-        if batch_size is None:
-            batch_size = self.args.batch
-
-        # 使用父类的方法构建数据集
-        dataset = self.build_dataset(dataset_path, mode, batch_size)
-
-        # 创建数据加载器
-        dataloader = self.get_dataloader(dataset, batch_size)
-
-        return dataloader
-
     def _do_train(self, world_size=1):
         """融合YOLOv8标准训练+自定义域判别训练"""
         try:
             self._setup_train(world_size)
             self.neck_extractor = NeckFeatureExtractor(self.model)
             self.validator = self.get_validator()
-            # 解析 source/target 的 YAML
-            with open(self.source_data, "r") as f:
-                source_yaml = yaml.safe_load(f)
-            with open(self.target_data, "r") as f:
-                target_yaml = yaml.safe_load(f)
-            source_img_path = os.path.join(source_yaml.get("path", ""), source_yaml["train"])
-            target_img_path = os.path.join(target_yaml.get("path", ""), target_yaml["train"])
-            source_dataset = self.build_dataset(source_img_path, mode='train', batch=self.args.batch)
-            target_dataset = self.build_dataset(target_img_path, mode='train', batch=self.args.batch)
+
+            source_dataset = self.build_dataset(self.source_data["train"], mode='train', batch=self.args.batch)
+            target_dataset = self.build_dataset(self.target_data["train"], mode='train', batch=self.args.batch)
             source_loader = DataLoader(source_dataset, batch_size=self.args.batch, shuffle=True,
                                        num_workers=self.args.workers,
                                        collate_fn=source_dataset.collate_fn if hasattr(source_dataset,

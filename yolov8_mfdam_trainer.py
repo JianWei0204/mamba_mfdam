@@ -210,7 +210,7 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
 
                     if domain_loss is not None:
                         domain_loss = self.domain_weight * domain_loss
-                        self.scaler.scale(total_loss.sum()).backward()
+                        self.scaler.scale(domain_loss.sum()).backward()
                         self.scaler.step(self.optimizer)
                         self.scaler.update()
                         self.optimizer.zero_grad()

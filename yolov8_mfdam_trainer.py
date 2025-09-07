@@ -118,6 +118,7 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
 
             self.model.to(self.device)
 
+
             self.neck_extractor = NeckFeatureExtractor(self.model)
 
             # 这里加载并解析 source/target 的 YAML
@@ -173,6 +174,7 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
                     if source_imgs.dtype == torch.uint8:
                         source_imgs = source_imgs.float() / 255.0
                     source_imgs = source_imgs.to(self.device)
+                    source_batch['img'] = source_imgs
                     source_domain_labels = torch.zeros(source_imgs.size(0), dtype=torch.long, device=self.device)
 
                     # 1. 检测损失

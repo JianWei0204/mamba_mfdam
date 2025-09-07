@@ -5,52 +5,7 @@ from ultralytics.models.yolo.detect import DetectionTrainer
 from ultralytics.utils import LOGGER, DEFAULT_CFG
 from torch.utils.data import DataLoader
 from mamba_mfdam import MambaMFDAM
-
-class NeckFeatureExtractor:
-    """
-    用于从YOLOv8模型中提取neck输出特征的hook管理器
-    """
-
-    def __init__(self, model):
-        self.model = model
-        self.features = []
-        self.hooks = []
-        # 选择YOLOv8主模型的neck部分
-        # 以 backbone 前的 C2f, C2f, SPPF 层为特征输出
-        self.neck_layers = self._find_neck_layers()
-        self._register_hooks()
-
-    def _find_neck_layers(self):
-        # 根据YOLOv8结构，通常4,6,9层传向neck
-        layers = []
-        if hasattr(self.model, 'model') and hasattr(self.model.model, 'model'):
-            for i, m in enumerate(self.model.model.model):
-                if i in [4, 6, 9]:  # 取3个尺度输出
-                    layers.append(m)
-        return layers
-
-    def _hook_fn(self, module, input, output):
-        # hook回调函数，每次目标层前向传播时自动调用，把输出特征保存到
-        self.features.append(output)
-
-    def _register_hooks(self):
-        # 在neck_layers每一层上注册forward hook，把hook句柄存入self.hooks
-        for layer in self.neck_layers:
-            h = layer.register_forward_hook(self._hook_fn)
-            self.hooks.append(h)
-
-    def clear(self):
-        self.features.clear()
-
-    def remove(self):
-        for h in self.hooks:
-            h.remove()
-        self.hooks.clear()
-
-    def get_features(self):
-        # 返回neck的三个尺度特征列表
-        # 按照 [small, medium, large]
-        return [f for f in self.features]
+from neck_feature_extractor import NeckFeatureExtractor
 
 
 class YOLOv8MFDAMTrainer(DetectionTrainer):
@@ -79,7 +34,7 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
         return model
 
     def get_backbone_params(self):
-        backbone_layers = [self.model.model.model[i] for i in range(10)]  # 前10层为backbone
+        backbone_layers = [self.model.model[i] for i in range(10)]  # 前10层为backbone
         backbone_params = []
         for layer in backbone_layers:
             backbone_params += list(layer.parameters())
@@ -111,24 +66,6 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
         dataloader = self.get_dataloader(dataset, batch_size)
 
         return dataloader
-
-    def extract_neck_features(self, imgs):
-        """利用hook机制提取neck特征"""
-        self.neck_extractor.clear()
-        _ = self.model(imgs)  # 前向传播，hook自动保存特征
-        feats = self.neck_extractor.get_features()
-        # 确保返回3尺度特征
-        if len(feats) == 3:
-            return feats
-        else:
-            # 回退为虚拟特征
-            batch_size = imgs.size(0)
-            LOGGER.warning("Neck特征数缺失，使用虚拟neck特征！")
-            return [
-                torch.randn(batch_size, 256, 20, 20).to(self.device),
-                torch.randn(batch_size, 512, 10, 10).to(self.device),
-                torch.randn(batch_size, 1024, 5, 5).to(self.device)
-            ]
 
     def _do_train(self, world_size=1):
         """重写训练方法以实现交替训练"""
@@ -237,6 +174,26 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
             # 确保清理hook
             if hasattr(self, 'neck_extractor'):
                 self.neck_extractor.remove()
+
+    def extract_neck_features(self, imgs):
+        """利用hook机制提取neck特征"""
+        self.neck_extractor.clear()
+        print("Before forward, features:", self.neck_extractor.get_features())
+        _ = self.model(imgs)  # 前向传播，hook自动保存特征
+        print("After forward, features:", self.neck_extractor.get_features())
+        feats = self.neck_extractor.get_features()
+        # 确保返回3尺度特征
+        if len(feats) == 3:
+            return feats
+        else:
+            # 回退为虚拟特征
+            batch_size = imgs.size(0)
+            LOGGER.warning("Neck特征数缺失，使用虚拟neck特征！")
+            return [
+                torch.randn(batch_size, 256, 20, 20).to(self.device),
+                torch.randn(batch_size, 512, 10, 10).to(self.device),
+                torch.randn(batch_size, 1024, 5, 5).to(self.device)
+            ]
 
     def _extract_neck_channels(self, model):
         neck_channels = []

@@ -115,6 +115,9 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
     def _do_train(self, world_size=1):
         """重写训练方法以实现交替训练"""
         try:
+
+            self.model.to(self.device)
+
             self.neck_extractor = NeckFeatureExtractor(self.model)
 
             # 这里加载并解析 source/target 的 YAML
@@ -173,8 +176,8 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
                     source_domain_labels = torch.zeros(source_imgs.size(0), dtype=torch.long, device=self.device)
 
                     # 1. 检测损失
-                    preds = self.model(source_imgs)
-                    yolo_loss = self.loss(preds, source_batch)
+                    loss, loss_items = self.model(source_batch)
+                    yolo_loss = loss
 
                     # 2. neck特征提取和域判别损失
                     neck_features = self.extract_neck_features(source_imgs)

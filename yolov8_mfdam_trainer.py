@@ -127,6 +127,7 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
             source_img_path = os.path.join(source_yaml.get("path", ""), source_yaml["train"])
             target_img_path = os.path.join(target_yaml.get("path", ""), target_yaml["train"])
 
+
             # 用已解析的 data 字典和图片路径来调用 build_dataset
             source_dataset = self.build_dataset(source_img_path, mode='train', batch=self.args.batch)
             target_dataset = self.build_dataset(target_img_path, mode='train', batch=self.args.batch)

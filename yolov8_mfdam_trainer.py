@@ -192,19 +192,20 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
             ]
 
     def _extract_neck_channels(self, model):
+        # 直接返回 Layer 4, 6, 9 的 out_channels
+        seq = model.model
+        indices = [4, 6, 9]
         neck_channels = []
-        try:
-            if hasattr(model, 'model') and hasattr(model.model, 'model'):
-                for i, module in enumerate(model.model.model):
-                    if hasattr(module, 'cv2') and hasattr(module.cv2, 'conv'):
-                        if i >= 12:
-                            neck_channels.append(module.cv2.conv.out_channels)
-                    elif hasattr(module, 'c2') and hasattr(module.c2, 'conv'):
-                        if i >= 12:
-                            neck_channels.append(module.c2.conv.out_channels)
-            if not neck_channels:
-                neck_channels = [256, 512, 1024]
-        except Exception as e:
-            LOGGER.warning(f"提取neck通道时出错: {e}，使用默认值")
-            neck_channels = [256, 512, 1024]
+        for i in indices:
+            layer = seq[i]
+            if hasattr(layer, 'cv2') and hasattr(layer.cv2, 'conv'):
+                neck_channels.append(layer.cv2.conv.out_channels)
+            elif hasattr(layer, 'm') and hasattr(layer, 'cv2'):
+                # C2f结构
+                neck_channels.append(layer.cv2.conv.out_channels)
+            elif hasattr(layer, 'conv'):
+                neck_channels.append(layer.conv.out_channels)
+            else:
+                # fallback简单处理
+                neck_channels.append(list(layer.parameters())[0].shape[0])
         return neck_channels

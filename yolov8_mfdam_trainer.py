@@ -115,10 +115,7 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
     def _do_train(self, world_size=1):
         """重写训练方法以实现交替训练"""
         try:
-
-            self.model.to(self.device)
-
-
+            self._setup_train(world_size)
             self.neck_extractor = NeckFeatureExtractor(self.model)
 
             # 这里加载并解析 source/target 的 YAML

@@ -1,7 +1,10 @@
 import torch
+import yaml
+import os
 from torch import nn
 from ultralytics.models.yolo.detect import DetectionTrainer
 from ultralytics.utils import LOGGER, DEFAULT_CFG
+from torch.utils.data import DataLoader
 from mamba_mfdam import MambaMFDAM
 import numpy as np
 
@@ -112,15 +115,23 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
     def _do_train(self, world_size=1):
         """重写训练方法以实现交替训练"""
         try:
-            # 初始化neck特征提取器
             self.neck_extractor = NeckFeatureExtractor(self.model)
 
-            # 构建源域和目标域数据集
-            source_dataset = self.build_dataset(self.source_data, mode='train', batch=self.args.batch)
-            target_dataset = self.build_dataset(self.target_data, mode='train', batch=self.args.batch)
+            # 这里加载并解析 source/target 的 YAML
+            with open(self.source_data, "r") as f:
+                source_yaml = yaml.safe_load(f)
+            with open(self.target_data, "r") as f:
+                target_yaml = yaml.safe_load(f)
+
+            # 构造图片路径（绝对路径）
+            source_img_path = os.path.join(source_yaml.get("path", ""), source_yaml["train"])
+            target_img_path = os.path.join(target_yaml.get("path", ""), target_yaml["train"])
+
+            # 用已解析的 data 字典和图片路径来调用 build_dataset
+            source_dataset = self.build_dataset(source_img_path, mode='train', batch=self.args.batch)
+            target_dataset = self.build_dataset(target_img_path, mode='train', batch=self.args.batch)
 
             # 创建数据加载器
-            from torch.utils.data import DataLoader
             source_loader = DataLoader(
                 source_dataset,
                 batch_size=self.args.batch,
@@ -154,12 +165,15 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
                         source_iter = iter(source_loader)
                         source_batch = next(source_iter)
 
-                    source_imgs = source_batch['img'].to(self.device)
+                    source_imgs = source_batch['img']
+                    if source_imgs.dtype == torch.uint8:
+                        source_imgs = source_imgs.float() / 255.0
+                    source_imgs = source_imgs.to(self.device)
                     source_domain_labels = torch.zeros(source_imgs.size(0), dtype=torch.long, device=self.device)
 
                     # 1. 检测损失
                     preds = self.model(source_imgs)
-                    yolo_loss = self.criterion(preds, source_batch)
+                    yolo_loss = self.loss(preds, source_batch)
 
                     # 2. neck特征提取和域判别损失
                     neck_features = self.extract_neck_features(source_imgs)
@@ -182,7 +196,10 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
                         target_iter = iter(target_loader)
                         target_batch = next(target_iter)
 
-                    target_imgs = target_batch['img'].to(self.device)
+                    target_imgs = target_batch['img']
+                    if target_imgs.dtype == torch.uint8:
+                        target_imgs = target_imgs.float() / 255.0
+                    target_imgs = target_imgs.to(self.device)
                     target_domain_labels = torch.ones(target_imgs.size(0), dtype=torch.long, device=self.device)
 
                     # 只做域判别损失

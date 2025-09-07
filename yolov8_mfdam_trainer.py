@@ -107,6 +107,7 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
 
             # ==== 训练循环 ====
             for epoch in range(self.epochs):
+                print(f"Epoch {epoch + 1} start, conv0 mean: {self.model.model[0].conv.weight.mean().item():.6f}")
                 self.model.train()
                 epoch_loss = 0.0
 
@@ -157,8 +158,9 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
                 avg_loss = epoch_loss / num_batches
 
                 # ==== 标准YOLOv8验证与权重保存 ====
-
+                print(f"Epoch {epoch + 1} end, conv0 mean: {self.model.model[0].conv.weight.mean().item():.6f}")
                 val_results = self.validator()
+                print("Val results:", val_results)
                 val_map50 = val_results.get('metrics/mAP50(B)', -1.0)
                 LOGGER.info(f"Epoch {epoch + 1}/{self.epochs}: 平均损失 = {avg_loss:.4f}, Val mAP50 = {val_map50:.4f}")
                 with open(results_csv, "a") as f:

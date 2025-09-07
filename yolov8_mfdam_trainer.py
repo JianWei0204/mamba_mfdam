@@ -176,21 +176,20 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
 
                     # 1. 检测损失
                     loss, loss_items = self.model(source_batch)
-                    yolo_loss = loss
 
                     # 2. neck特征提取和域判别损失
                     neck_features = self.extract_neck_features(source_imgs)
                     _, domain_loss = self.mfdam_module(neck_features, source_domain_labels)
 
-                    total_loss = yolo_loss + self.domain_weight * domain_loss if domain_loss is not None else yolo_loss
+                    total_loss = loss + self.domain_weight * domain_loss if domain_loss is not None else loss
 
                     # 反向传播
-                    self.scaler.scale(total_loss).backward()
+                    self.scaler.scale(total_loss.sum()).backward()
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                     self.optimizer.zero_grad()
 
-                    epoch_loss += total_loss.item()
+                    epoch_loss += total_loss.sum().item()
 
                     # 目标域batch训练
                     try:
@@ -211,7 +210,7 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
 
                     if domain_loss is not None:
                         domain_loss = self.domain_weight * domain_loss
-                        self.scaler.scale(domain_loss).backward()
+                        self.scaler.scale(total_loss.sum()).backward()
                         self.scaler.step(self.optimizer)
                         self.scaler.update()
                         self.optimizer.zero_grad()

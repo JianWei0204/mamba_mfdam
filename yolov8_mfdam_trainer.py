@@ -178,15 +178,11 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
     def extract_neck_features(self, imgs):
         """利用hook机制提取neck特征"""
         self.neck_extractor.clear()
-        print("Before forward, features:", self.neck_extractor.get_features())
         _ = self.model(imgs)  # 前向传播，hook自动保存特征
-        print("After forward, features:", self.neck_extractor.get_features())
         feats = self.neck_extractor.get_features()
-        # 确保返回3尺度特征
-        if len(feats) == 3:
+        if feats is not None and len(feats) == 3:
             return feats
         else:
-            # 回退为虚拟特征
             batch_size = imgs.size(0)
             LOGGER.warning("Neck特征数缺失，使用虚拟neck特征！")
             return [

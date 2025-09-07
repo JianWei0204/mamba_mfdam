@@ -1,13 +1,10 @@
 import torch
 import yaml
 import os
-from torch import nn
 from ultralytics.models.yolo.detect import DetectionTrainer
 from ultralytics.utils import LOGGER, DEFAULT_CFG
 from torch.utils.data import DataLoader
 from mamba_mfdam import MambaMFDAM
-import numpy as np
-
 
 class NeckFeatureExtractor:
     """
@@ -80,6 +77,27 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
         else:
             LOGGER.warning("未能提取neck通道数，MFDAM模块未初始化")
         return model
+
+    def get_backbone_params(self):
+        backbone_layers = [self.model.model.model[i] for i in range(10)]  # 前10层为backbone
+        backbone_params = []
+        for layer in backbone_layers:
+            backbone_params += list(layer.parameters())
+        return backbone_params
+
+    def build_optimizer_domain(self, lr=0.001, weight_decay=0.0005, momentum=0.9):
+        backbone_params = self.get_backbone_params()
+        mfdam_params = list(self.mfdam_module.parameters())
+        params = backbone_params + mfdam_params
+        optimizer_domain = torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
+        return optimizer_domain
+
+    def _setup_train(self, world_size):
+        super()._setup_train(world_size)
+        # 构建域适应优化器
+        self.optimizer_domain = self.build_optimizer_domain(
+            lr=self.args.lr0, weight_decay=self.args.weight_decay, momentum=self.args.momentum
+        )
 
     def get_custom_dataloader(self, dataset_path, mode='train', batch_size=None):
         """获取自定义数据加载器"""
@@ -176,20 +194,12 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
 
                     # 1. 检测损失
                     loss, loss_items = self.model(source_batch)
-
-                    # 2. neck特征提取和域判别损失
-                    neck_features = self.extract_neck_features(source_imgs)
-                    _, domain_loss = self.mfdam_module(neck_features, source_domain_labels)
-
-                    total_loss = loss + self.domain_weight * domain_loss if domain_loss is not None else loss
-
-                    # 反向传播
-                    self.scaler.scale(total_loss.sum()).backward()
+                    self.scaler.scale(loss.sum()).backward()
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                     self.optimizer.zero_grad()
 
-                    epoch_loss += total_loss.sum().item()
+                    epoch_loss += loss.sum().item()
 
                     # 目标域batch训练
                     try:
@@ -205,15 +215,16 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
                     target_domain_labels = torch.ones(target_imgs.size(0), dtype=torch.long, device=self.device)
 
                     # 只做域判别损失
-                    neck_features = self.extract_neck_features(target_imgs)
-                    _, domain_loss = self.mfdam_module(neck_features, target_domain_labels)
+                    neck_features_src = self.extract_neck_features(source_imgs)
+                    _, domain_loss_src = self.mfdam_module(neck_features_src, source_domain_labels)
+                    neck_features_tgt = self.extract_neck_features(target_imgs)
+                    _, domain_loss_tgt = self.mfdam_module(neck_features_tgt, target_domain_labels)
+                    domain_loss = self.domain_weight * (domain_loss_src + domain_loss_tgt)
 
-                    if domain_loss is not None:
-                        domain_loss = self.domain_weight * domain_loss
-                        self.scaler.scale(domain_loss.sum()).backward()
-                        self.scaler.step(self.optimizer)
-                        self.scaler.update()
-                        self.optimizer.zero_grad()
+                    self.scaler.scale(domain_loss.sum()).backward()
+                    self.scaler.step(self.optimizer_domain)
+                    self.scaler.update()
+                    self.optimizer_domain.zero_grad()
 
                 self.current_epoch += 1
                 avg_loss = epoch_loss / num_batches

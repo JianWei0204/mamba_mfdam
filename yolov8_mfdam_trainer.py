@@ -68,41 +68,28 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
         return dataloader
 
     def _do_train(self, world_size=1):
-        """重写训练方法以实现交替训练"""
+        """融合YOLOv8标准训练+自定义域判别训练"""
         try:
             self._setup_train(world_size)
             self.neck_extractor = NeckFeatureExtractor(self.model)
-
-            # 这里加载并解析 source/target 的 YAML
+            self.validator = self.get_validator()
+            # 解析 source/target 的 YAML
             with open(self.source_data, "r") as f:
                 source_yaml = yaml.safe_load(f)
             with open(self.target_data, "r") as f:
                 target_yaml = yaml.safe_load(f)
-
-            # 构造图片路径（绝对路径）
             source_img_path = os.path.join(source_yaml.get("path", ""), source_yaml["train"])
             target_img_path = os.path.join(target_yaml.get("path", ""), target_yaml["train"])
-
-
-            # 用已解析的 data 字典和图片路径来调用 build_dataset
             source_dataset = self.build_dataset(source_img_path, mode='train', batch=self.args.batch)
             target_dataset = self.build_dataset(target_img_path, mode='train', batch=self.args.batch)
-
-            # 创建数据加载器
-            source_loader = DataLoader(
-                source_dataset,
-                batch_size=self.args.batch,
-                shuffle=True,
-                num_workers=self.args.workers,
-                collate_fn=source_dataset.collate_fn if hasattr(source_dataset, 'collate_fn') else None
-            )
-            target_loader = DataLoader(
-                target_dataset,
-                batch_size=self.args.batch,
-                shuffle=True,
-                num_workers=self.args.workers,
-                collate_fn=target_dataset.collate_fn if hasattr(target_dataset, 'collate_fn') else None
-            )
+            source_loader = DataLoader(source_dataset, batch_size=self.args.batch, shuffle=True,
+                                       num_workers=self.args.workers,
+                                       collate_fn=source_dataset.collate_fn if hasattr(source_dataset,
+                                                                                       'collate_fn') else None)
+            target_loader = DataLoader(target_dataset, batch_size=self.args.batch, shuffle=True,
+                                       num_workers=self.args.workers,
+                                       collate_fn=target_dataset.collate_fn if hasattr(target_dataset,
+                                                                                       'collate_fn') else None)
 
             source_iter = iter(source_loader)
             target_iter = iter(target_loader)
@@ -110,6 +97,15 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
 
             LOGGER.info(f"开始交替训练: 源域{len(source_loader)}批次, 目标域{len(target_loader)}批次")
 
+            # ==== 标准YOLOv8训练日志、权重与验证相关初始化 ====
+            best_fitness = -1
+            weights_dir = os.path.join(self.save_dir, "weights")
+            os.makedirs(weights_dir, exist_ok=True)
+            results_csv = os.path.join(self.save_dir, "results.csv")
+            with open(results_csv, "w") as f:
+                f.write("epoch,train_loss,val_map50\n")
+
+            # ==== 训练循环 ====
             for epoch in range(self.epochs):
                 self.model.train()
                 epoch_loss = 0.0
@@ -121,21 +117,18 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
                     except StopIteration:
                         source_iter = iter(source_loader)
                         source_batch = next(source_iter)
-
                     source_imgs = source_batch['img']
                     if source_imgs.dtype == torch.uint8:
                         source_imgs = source_imgs.float() / 255.0
                     source_imgs = source_imgs.to(self.device)
                     source_batch['img'] = source_imgs
                     source_domain_labels = torch.zeros(source_imgs.size(0), dtype=torch.long, device=self.device)
-
-                    # 1. 检测损失
+                    # 检测损失
                     loss, loss_items = self.model(source_batch)
                     self.scaler.scale(loss.sum()).backward()
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                     self.optimizer.zero_grad()
-
                     epoch_loss += loss.sum().item()
 
                     # 目标域batch训练
@@ -144,20 +137,17 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
                     except StopIteration:
                         target_iter = iter(target_loader)
                         target_batch = next(target_iter)
-
                     target_imgs = target_batch['img']
                     if target_imgs.dtype == torch.uint8:
                         target_imgs = target_imgs.float() / 255.0
                     target_imgs = target_imgs.to(self.device)
                     target_domain_labels = torch.ones(target_imgs.size(0), dtype=torch.long, device=self.device)
-
-                    # 只做域判别损失
+                    # 域判别损失
                     neck_features_src = self.extract_neck_features(source_imgs)
                     _, domain_loss_src = self.mfdam_module(neck_features_src, source_domain_labels)
                     neck_features_tgt = self.extract_neck_features(target_imgs)
                     _, domain_loss_tgt = self.mfdam_module(neck_features_tgt, target_domain_labels)
                     domain_loss = self.domain_weight * (domain_loss_src + domain_loss_tgt)
-
                     self.scaler.scale(domain_loss.sum()).backward()
                     self.scaler.step(self.optimizer_domain)
                     self.scaler.update()
@@ -165,13 +155,24 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
 
                 self.current_epoch += 1
                 avg_loss = epoch_loss / num_batches
-                LOGGER.info(f"Epoch {epoch + 1}/{self.epochs}: 平均损失 = {avg_loss:.4f}")
 
+                # ==== 标准YOLOv8验证与权重保存 ====
+
+                val_results = self.validator()
+                val_map50 = val_results.get('metrics/mAP50(B)', -1.0)
+                LOGGER.info(f"Epoch {epoch + 1}/{self.epochs}: 平均损失 = {avg_loss:.4f}, Val mAP50 = {val_map50:.4f}")
+                with open(results_csv, "a") as f:
+                    f.write(f"{epoch + 1},{avg_loss:.4f},{val_map50:.4f}\n")
+                last_ckpt = os.path.join(weights_dir, "last.pt")
+                torch.save(self.model.state_dict(), last_ckpt)
+                if val_map50 > best_fitness:
+                    best_fitness = val_map50
+                    best_ckpt = os.path.join(weights_dir, "best.pt")
+                    torch.save(self.model.state_dict(), best_ckpt)
         except Exception as e:
             LOGGER.error(f"训练过程中出错: {e}")
             raise
         finally:
-            # 确保清理hook
             if hasattr(self, 'neck_extractor'):
                 self.neck_extractor.remove()
 

@@ -63,14 +63,8 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
 
             source_dataset = self.build_dataset(self.source_data["train"], mode='train', batch=self.args.batch)
             target_dataset = self.build_dataset(self.target_data["train"], mode='train', batch=self.args.batch)
-            source_loader = DataLoader(source_dataset, batch_size=self.args.batch, shuffle=True,
-                                       num_workers=self.args.workers,
-                                       collate_fn=source_dataset.collate_fn if hasattr(source_dataset,
-                                                                                       'collate_fn') else None)
-            target_loader = DataLoader(target_dataset, batch_size=self.args.batch, shuffle=True,
-                                       num_workers=self.args.workers,
-                                       collate_fn=target_dataset.collate_fn if hasattr(target_dataset,
-                                                                                       'collate_fn') else None)
+            source_loader = DataLoader(source_dataset, batch_size=self.args.batch, shuffle=True,num_workers=self.args.workers, collate_fn=source_dataset.collate_fn if hasattr(source_dataset,'collate_fn') else None)
+            target_loader = DataLoader(target_dataset, batch_size=self.args.batch, shuffle=True,num_workers=self.args.workers,collate_fn=target_dataset.collate_fn if hasattr(target_dataset,'collate_fn') else None)
 
             source_iter = iter(source_loader)
             target_iter = iter(target_loader)
@@ -99,12 +93,8 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
                     except StopIteration:
                         source_iter = iter(source_loader)
                         source_batch = next(source_iter)
-                    source_imgs = source_batch['img']
-                    if source_imgs.dtype == torch.uint8:
-                        source_imgs = source_imgs.float() / 255.0
-                    source_imgs = source_imgs.to(self.device)
-                    source_batch['img'] = source_imgs
-                    source_domain_labels = torch.zeros(source_imgs.size(0), dtype=torch.long, device=self.device)
+                    source_batch = self.preprocess_batch(source_batch)
+                    source_domain_labels = torch.zeros(source_batch['img'].size(0), dtype=torch.long,device=self.device)
                     # 检测损失
                     loss, loss_items = self.model(source_batch)
                     self.scaler.scale(loss.sum()).backward()
@@ -119,15 +109,12 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
                     except StopIteration:
                         target_iter = iter(target_loader)
                         target_batch = next(target_iter)
-                    target_imgs = target_batch['img']
-                    if target_imgs.dtype == torch.uint8:
-                        target_imgs = target_imgs.float() / 255.0
-                    target_imgs = target_imgs.to(self.device)
-                    target_domain_labels = torch.ones(target_imgs.size(0), dtype=torch.long, device=self.device)
+                    target_batch = self.preprocess_batch(target_batch)
+                    target_domain_labels = torch.zeros(target_batch['img'].size(0), dtype=torch.long,device=self.device)
                     # 域判别损失
-                    neck_features_src = self.extract_neck_features(source_imgs)
+                    neck_features_src = self.extract_neck_features(source_batch['img'])
                     _, domain_loss_src = self.mfdam_module(neck_features_src, source_domain_labels)
-                    neck_features_tgt = self.extract_neck_features(target_imgs)
+                    neck_features_tgt = self.extract_neck_features(target_batch['img'])
                     _, domain_loss_tgt = self.mfdam_module(neck_features_tgt, target_domain_labels)
                     domain_loss = self.domain_weight * (domain_loss_src + domain_loss_tgt)
                     self.scaler.scale(domain_loss.sum()).backward()

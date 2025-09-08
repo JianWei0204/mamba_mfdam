@@ -61,8 +61,16 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
             self.neck_extractor = NeckFeatureExtractor(self.model)
             self.validator = self.get_validator()
 
-            source_dataset = self.build_dataset(self.source_data["train"], mode='train', batch=self.args.batch)
-            target_dataset = self.build_dataset(self.target_data["train"], mode='train', batch=self.args.batch)
+            with open(self.source_data, "r") as f:
+                source_yaml = yaml.safe_load(f)
+            with open(self.target_data, "r") as f:
+                target_yaml = yaml.safe_load(f)
+
+            source_img_path = os.path.join(source_yaml.get("path", ""), source_yaml["train"])
+            target_img_path = os.path.join(target_yaml.get("path", ""), target_yaml["train"])
+
+            source_dataset = self.build_dataset(source_img_path, mode='train', batch=self.args.batch)
+            target_dataset = self.build_dataset(target_img_path, mode='train', batch=self.args.batch)
             source_loader = DataLoader(source_dataset, batch_size=self.args.batch, shuffle=True,num_workers=self.args.workers, collate_fn=source_dataset.collate_fn if hasattr(source_dataset,'collate_fn') else None)
             target_loader = DataLoader(target_dataset, batch_size=self.args.batch, shuffle=True,num_workers=self.args.workers,collate_fn=target_dataset.collate_fn if hasattr(target_dataset,'collate_fn') else None)
 
@@ -87,7 +95,7 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
                 epoch_loss = 0.0
 
                 for batch_idx in range(num_batches):
-                    # 源域batch训练
+                    # 源域检测训练
                     try:
                         source_batch = next(source_iter)
                     except StopIteration:
@@ -103,7 +111,7 @@ class YOLOv8MFDAMTrainer(DetectionTrainer):
                     self.optimizer.zero_grad()
                     epoch_loss += loss.sum().item()
 
-                    # 目标域batch训练
+                    # 源域和目标域域适应训练
                     try:
                         target_batch = next(target_iter)
                     except StopIteration:
